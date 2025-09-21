@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest Hand Tracking - Simple Version</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #222;
+            color: white;
+            text-align: center;
+        }
+        button {
+            background: #4CAF50;
+            border: none;
+            color: white;
+            padding: 20px 40px;
+            font-size: 18px;
+            margin: 10px;
+            cursor: pointer;
+            border-radius: 10px;
+        }
+        .status {
+            font-size: 24px;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .data {
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-family: monospace;
+            text-align: left;
+        }
+    </style>
+</head>
+<body>
+    <h1>🤖 Quest Hand Tracking - Simple</h1>
+    
+    <div id="status" class="status">
+        状态: 准备就绪
+    </div>
+    
+    <button onclick="startSimpleTracking()">开始简单追踪</button>
+    <button onclick="enterVR()" style="background: #2196F3;">进入VR模式</button>
+    
+    <div class="data">
+        <h3>📡 手部数据</h3>
+        <div id="dataOutput">等待开始...</div>
+    </div>
+    
+    <div style="margin-top: 30px; font-size: 14px;">
+        <p>🔧 调试模式说明:</p>
+        <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
+            <li><strong>简单追踪:</strong> 发送模拟数据进行测试</li>
+            <li><strong>VR模式:</strong> 尝试启动真实的手部追踪</li>
+            <li>确保WebSocket服务器运行在: ws://10.3.32.31:8765</li>
+        </ul>
+    </div>
+
+    <script>
+        let websocket = null;
+        let isTracking = false;
+        let trackingInterval = null;
+
+        // WebSocket连接
+        function connectWebSocket() {
+            try {
+                websocket = new WebSocket('ws://10.3.32.31:8765');
+                
+                websocket.onopen = function() {
+                    updateStatus('✅ 已连接到机械臂控制服务器');
+                    updateData('WebSocket连接成功');
+                };
+                
+                websocket.onclose = function() {
+                    updateStatus('❌ 与服务器断开连接');
+                    updateData('WebSocket连接断开');
+                };
+                
+                websocket.onerror = function(error) {
+                    updateStatus('❌ 连接错误');
+                    updateData('WebSocket连接错误: ' + error);
+                };
+                
+            } catch (error) {
+                updateStatus('❌ WebSocket连接失败');
+                updateData('连接失败: ' + error);
+            }
+        }
+
+        // 简单追踪 (发送测试数据)
+        function startSimpleTracking() {
+            if (isTracking) {
+                stopTracking();
+                return;
+            }
+            
+            connectWebSocket();
+            isTracking = true;
+            
+            updateStatus('🔄 简单追踪模式运行中...');
+            
+            // 模拟手部数据发送
+            trackingInterval = setInterval(() => {
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    const time = Date.now() / 1000;
+                    
+                    // 生成模拟的手部追踪数据
+                    const handData = {
+                        timestamp: time,
+                        leftHand: {
+                            isTracked: true,
+                            position: {
+                                x: -0.2 + 0.1 * Math.sin(time * 0.5),
+                                y: 0.1 + 0.05 * Math.cos(time * 0.7),
+                                z: -0.3 + 0.03 * Math.sin(time * 0.3)
+                            },
+                            rotation: {
+                                x: 0, y: 0, z: 0, w: 1
+                            },
+                            pinchStrength: (Math.sin(time * 2) + 1) / 4
+                        },
+                        rightHand: {
+                            isTracked: true,
+                            position: {
+                                x: 0.2 + 0.1 * Math.sin(time * 0.5 + Math.PI),
+                                y: 0.1 + 0.05 * Math.cos(time * 0.7 + Math.PI),
+                                z: -0.3 + 0.03 * Math.sin(time * 0.3 + Math.PI)
+                            },
+                            rotation: {
+                                x: 0, y: 0, z: 0, w: 1
+                            },
+                            pinchStrength: (Math.sin(time * 2 + Math.PI) + 1) / 4
+                        }
+                    };
+                    
+                    websocket.send(JSON.stringify(handData));
+                    
+                    // 更新显示
+                    updateData(`发送数据: 左手(${handData.leftHand.position.x.toFixed(2)}, ${handData.leftHand.position.y.toFixed(2)}, ${handData.leftHand.position.z.toFixed(2)}) 右手(${handData.rightHand.position.x.toFixed(2)}, ${handData.rightHand.position.y.toFixed(2)}, ${handData.rightHand.position.z.toFixed(2)})`);
+                }
+            }, 50); // 20Hz
+            
+            document.querySelector('button').textContent = '停止追踪';
+        }
+
+        // 尝试进入VR模式进行真实手部追踪
+        async function enterVR() {
+            try {
+                updateStatus('🔄 正在启动VR模式...');
+                
+                // 检查WebXR支持
+                if (!navigator.xr) {
+                    throw new Error('此浏览器不支持WebXR');
+                }
+                
+                // 检查手部追踪支持
+                const supported = await navigator.xr.isSessionSupported('immersive-vr');
+                if (!supported) {
+                    throw new Error('此设备不支持沉浸式VR');
+                }
+                
+                // 连接WebSocket
+                connectWebSocket();
+                
+                // 请求VR会话 - 先尝试不要求手部追踪
+                const session = await navigator.xr.requestSession('immersive-vr', {
+                    optionalFeatures: ['hand-tracking']
+                });
+                
+                updateStatus('✅ VR会话启动成功');
+                
+                // 设置参考空间
+                const referenceSpace = await session.requestReferenceSpace('local');
+                
+                // 开始渲染循环
+                function onXRFrame(time, frame) {
+                    const pose = frame.getViewerPose(referenceSpace);
+                    
+                    if (pose) {
+                        // 尝试获取手部追踪数据
+                        const inputSources = session.inputSources;
+                        const handData = {
+                            timestamp: time / 1000,
+                            leftHand: null,
+                            rightHand: null
+                        };
+                        
+                        for (let inputSource of inputSources) {
+                            if (inputSource.hand) {
+                                const hand = inputSource.hand;
+                                const handedness = inputSource.handedness;
+                                
+                                // 获取手腕关节
+                                const wristJoint = hand.get('wrist');
+                                if (wristJoint) {
+                                    const jointPose = frame.getJointPose(wristJoint, referenceSpace);
+                                    
+                                    if (jointPose) {
+                                        const handInfo = {
+                                            isTracked: true,
+                                            position: {
+                                                x: jointPose.transform.position.x,
+                                                y: jointPose.transform.position.y,
+                                                z: jointPose.transform.position.z
+                                            },
+                                            rotation: {
+                                                x: jointPose.transform.orientation.x,
+                                                y: jointPose.transform.orientation.y,
+                                                z: jointPose.transform.orientation.z,
+                                                w: jointPose.transform.orientation.w
+                                            },
+                                            pinchStrength: 0 // 简化版本
+                                        };
+                                        
+                                        if (handedness === 'left') {
+                                            handData.leftHand = handInfo;
+                                        } else if (handedness === 'right') {
+                                            handData.rightHand = handInfo;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // 发送真实手部追踪数据
+                        if (websocket && websocket.readyState === WebSocket.OPEN) {
+                            websocket.send(JSON.stringify(handData));
+                        }
+                        
+                        // 更新显示
+                        const leftTracked = handData.leftHand ? '✅' : '❌';
+                        const rightTracked = handData.rightHand ? '✅' : '❌';
+                        updateData(`VR追踪: 左手${leftTracked} 右手${rightTracked}`);
+                    }
+                    
+                    session.requestAnimationFrame(onXRFrame);
+                }
+                
+                session.requestAnimationFrame(onXRFrame);
+                
+                // 会话结束处理
+                session.onend = function() {
+                    updateStatus('VR会话已结束');
+                };
+                
+            } catch (error) {
+                updateStatus('❌ VR启动失败: ' + error.message);
+                updateData('VR错误: ' + error.message);
+                
+                // 回退到简单追踪模式
+                console.log('回退到简单追踪模式');
+                startSimpleTracking();
+            }
+        }
+
+        function stopTracking() {
+            isTracking = false;
+            if (trackingInterval) {
+                clearInterval(trackingInterval);
+                trackingInterval = null;
+            }
+            
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            
+            updateStatus('⏹️ 追踪已停止');
+            document.querySelector('button').textContent = '开始简单追踪';
+        }
+
+        function updateStatus(message) {
+            document.getElementById('status').textContent = '状态: ' + message;
+        }
+
+        function updateData(message) {
+            const output = document.getElementById('dataOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            output.innerHTML = `[${timestamp}] ${message}<br>` + output.innerHTML;
+            
+            // 限制显示行数
+            const lines = output.innerHTML.split('<br>');
+            if (lines.length > 15) {
+                output.innerHTML = lines.slice(0, 15).join('<br>');
+            }
+        }
+
+        // 页面加载时自动尝试连接
+        window.onload = function() {
+            updateData('页面已加载，可以开始追踪');
+            updateData('WebSocket服务器: ws://10.3.32.31:8765');
+        };
+    </script>
+</body>
+</html>
+
+

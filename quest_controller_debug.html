@@ -1,0 +1,294 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest控制器调试工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #222;
+            color: white;
+        }
+        .debug-section {
+            background: rgba(255, 255, 255, 0.1);
+            margin: 20px 0;
+            padding: 20px;
+            border-radius: 10px;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 5px;
+            margin: 10px 0;
+        }
+        .success { background: rgba(0, 255, 0, 0.3); }
+        .error { background: rgba(255, 0, 0, 0.3); }
+        .warning { background: rgba(255, 255, 0, 0.3); color: black; }
+        button {
+            background: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 30px;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+            border-radius: 5px;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .gamepad-info {
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            font-family: monospace;
+        }
+        .hand-section {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .hand {
+            flex: 1;
+            margin: 0 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <h1>🔧 Quest控制器调试工具</h1>
+    
+    <div class="debug-section">
+        <h2>📋 系统检查</h2>
+        <div id="systemCheck">正在检查...</div>
+    </div>
+    
+    <div class="debug-section">
+        <h2>🎮 控制器状态</h2>
+        <button onclick="startDebugging()">开始调试</button>
+        <button onclick="stopDebugging()">停止调试</button>
+        <div id="gamepadsList">还未开始调试...</div>
+    </div>
+    
+    <div class="debug-section">
+        <h2>🔍 详细信息</h2>
+        <div class="hand-section">
+            <div class="hand">
+                <h3>🎮 左控制器</h3>
+                <div id="leftDebugInfo">等待数据...</div>
+            </div>
+            <div class="hand">
+                <h3>🎮 右控制器</h3>
+                <div id="rightDebugInfo">等待数据...</div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="debug-section">
+        <h2>💡 解决方案</h2>
+        <div id="solutions">
+            <h3>常见问题和解决方案：</h3>
+            <ul>
+                <li><strong>控制器未打开：</strong> 确保两个Quest控制器都已开机</li>
+                <li><strong>电量不足：</strong> 检查控制器电量，电量低时可能不稳定</li>
+                <li><strong>追踪丢失：</strong> 确保控制器在Quest头显的追踪范围内</li>
+                <li><strong>手部追踪冲突：</strong> 关闭手部追踪，使用控制器模式</li>
+                <li><strong>WebXR权限：</strong> 确保浏览器已授予WebXR权限</li>
+                <li><strong>设备配对：</strong> 重新配对控制器到Quest设备</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let isDebugging = false;
+        let debugLoop = null;
+
+        function checkSystem() {
+            const systemCheck = document.getElementById('systemCheck');
+            let checks = [];
+
+            // 检查Gamepad API
+            if (navigator.getGamepads) {
+                checks.push('<div class="status success">✅ Gamepad API 支持</div>');
+            } else {
+                checks.push('<div class="status error">❌ Gamepad API 不支持</div>');
+            }
+
+            // 检查WebXR
+            if (navigator.xr) {
+                checks.push('<div class="status success">✅ WebXR 支持</div>');
+            } else {
+                checks.push('<div class="status warning">⚠️ WebXR 不支持 (某些功能可能受限)</div>');
+            }
+
+            // 检查是否在HTTPS下运行
+            if (window.location.protocol === 'https:' || window.location.hostname === 'localhost') {
+                checks.push('<div class="status success">✅ 安全连接</div>');
+            } else {
+                checks.push('<div class="status warning">⚠️ 建议使用HTTPS连接</div>');
+            }
+
+            systemCheck.innerHTML = checks.join('');
+        }
+
+        function startDebugging() {
+            isDebugging = true;
+            debugLoop = setInterval(debugGamepads, 100); // 10Hz更新
+            console.log('开始调试模式');
+        }
+
+        function stopDebugging() {
+            isDebugging = false;
+            if (debugLoop) {
+                clearInterval(debugLoop);
+                debugLoop = null;
+            }
+            console.log('停止调试模式');
+        }
+
+        function debugGamepads() {
+            if (!isDebugging) return;
+
+            const gamepads = navigator.getGamepads();
+            const gamepadsList = document.getElementById('gamepadsList');
+            const leftInfo = document.getElementById('leftDebugInfo');
+            const rightInfo = document.getElementById('rightDebugInfo');
+
+            let detectedGamepads = [];
+            let leftController = null;
+            let rightController = null;
+
+            // 遍历所有设备
+            for (let i = 0; i < gamepads.length; i++) {
+                const gamepad = gamepads[i];
+                if (gamepad && gamepad.connected) {
+                    detectedGamepads.push({
+                        index: i,
+                        id: gamepad.id,
+                        connected: gamepad.connected,
+                        buttonsCount: gamepad.buttons.length,
+                        axesCount: gamepad.axes.length,
+                        mapping: gamepad.mapping,
+                        hand: gamepad.hand || 'unknown'
+                    });
+
+                    // 基于hand属性或索引分配左右手
+                    if (gamepad.hand === 'left' || (gamepad.hand === 'unknown' && i === 0)) {
+                        leftController = gamepad;
+                    } else if (gamepad.hand === 'right' || (gamepad.hand === 'unknown' && i === 1)) {
+                        rightController = gamepad;
+                    }
+                }
+            }
+
+            // 显示检测到的设备
+            if (detectedGamepads.length === 0) {
+                gamepadsList.innerHTML = '<div class="status error">❌ 未检测到任何控制器</div>' +
+                    '<div class="gamepad-info">' +
+                    '<strong>解决步骤：</strong><br>' +
+                    '1. 确保控制器已开机<br>' +
+                    '2. 按下控制器上的任意按钮激活<br>' +
+                    '3. 在Quest设备上检查控制器连接状态<br>' +
+                    '4. 尝试重新配对控制器' +
+                    '</div>';
+            } else {
+                let info = `<div class="status success">✅ 检测到 ${detectedGamepads.length} 个控制器</div>`;
+                detectedGamepads.forEach(gp => {
+                    info += `<div class="gamepad-info">
+                        <strong>控制器 ${gp.index}:</strong><br>
+                        ID: ${gp.id}<br>
+                        手部: ${gp.hand}<br>
+                        按钮: ${gp.buttonsCount} 个<br>
+                        轴: ${gp.axesCount} 个<br>
+                        映射: ${gp.mapping}<br>
+                        连接状态: ${gp.connected ? '已连接' : '未连接'}
+                    </div>`;
+                });
+                gamepadsList.innerHTML = info;
+            }
+
+            // 显示左控制器信息
+            if (leftController) {
+                const buttons = Array.from(leftController.buttons).map((btn, i) => 
+                    `按钮${i}: ${btn.pressed ? '按下' : '未按'} (${btn.value.toFixed(3)})`
+                ).join('<br>');
+                const axes = Array.from(leftController.axes).map((axis, i) => 
+                    `轴${i}: ${axis.toFixed(3)}`
+                ).join('<br>');
+                
+                leftInfo.innerHTML = `
+                    <div class="status success">✅ 左控制器已连接</div>
+                    <div class="gamepad-info">
+                        <strong>按钮状态:</strong><br>${buttons}<br><br>
+                        <strong>轴状态:</strong><br>${axes}
+                    </div>
+                `;
+            } else {
+                leftInfo.innerHTML = '<div class="status error">❌ 左控制器未检测到</div>';
+            }
+
+            // 显示右控制器信息
+            if (rightController) {
+                const buttons = Array.from(rightController.buttons).map((btn, i) => 
+                    `按钮${i}: ${btn.pressed ? '按下' : '未按'} (${btn.value.toFixed(3)})`
+                ).join('<br>');
+                const axes = Array.from(rightController.axes).map((axis, i) => 
+                    `轴${i}: ${axis.toFixed(3)}`
+                ).join('<br>');
+                
+                rightInfo.innerHTML = `
+                    <div class="status success">✅ 右控制器已连接</div>
+                    <div class="gamepad-info">
+                        <strong>按钮状态:</strong><br>${buttons}<br><br>
+                        <strong>轴状态:</strong><br>${axes}
+                    </div>
+                `;
+            } else {
+                rightInfo.innerHTML = `
+                    <div class="status error">❌ 右控制器未检测到</div>
+                    <div class="gamepad-info">
+                        <strong>可能原因:</strong><br>
+                        • 控制器未开机或电量不足<br>
+                        • 控制器超出追踪范围<br>
+                        • 需要按下按钮激活<br>
+                        • 配对连接问题<br><br>
+                        <strong>解决方法:</strong><br>
+                        1. 检查控制器电源指示灯<br>
+                        2. 按下Menu或Home键激活<br>
+                        3. 在Quest设置中重新配对<br>
+                        4. 重启Quest设备
+                    </div>
+                `;
+            }
+        }
+
+        // 页面加载时自动检查系统
+        window.onload = function() {
+            checkSystem();
+            
+            // 监听gamepad连接事件
+            window.addEventListener("gamepadconnected", function(e) {
+                console.log("控制器已连接:", e.gamepad);
+                if (isDebugging) {
+                    debugGamepads(); // 立即更新显示
+                }
+            });
+
+            window.addEventListener("gamepaddisconnected", function(e) {
+                console.log("控制器已断开:", e.gamepad);
+                if (isDebugging) {
+                    debugGamepads(); // 立即更新显示
+                }
+            });
+        };
+    </script>
+</body>
+</html>
+
+

@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest Hand Tracking for XArm Control</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            text-align: center;
+        }
+        .status {
+            font-size: 24px;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .connected { background: rgba(0, 255, 0, 0.3); }
+        .disconnected { background: rgba(255, 0, 0, 0.3); }
+        .data {
+            text-align: left;
+            background: rgba(0, 0, 0, 0.3);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        button {
+            background: #4CAF50;
+            border: none;
+            color: white;
+            padding: 15px 32px;
+            text-align: center;
+            text-decoration: none;
+            display: inline-block;
+            font-size: 16px;
+            margin: 10px;
+            cursor: pointer;
+            border-radius: 10px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #cccccc;
+            cursor: not-allowed;
+        }
+        .hand-info {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .hand {
+            flex: 1;
+            margin: 0 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🤖 XArm机械臂控制 - Quest手部追踪</h1>
+        
+        <div id="status" class="status disconnected">
+            状态: 未连接到服务器
+        </div>
+        
+        <button id="startBtn" onclick="startHandTracking()">开始手部追踪</button>
+        <button id="stopBtn" onclick="stopHandTracking()" disabled>停止追踪</button>
+        
+        <div class="hand-info">
+            <div class="hand">
+                <h3>👈 左手</h3>
+                <div id="leftHandInfo">等待数据...</div>
+            </div>
+            <div class="hand">
+                <h3>👉 右手</h3>
+                <div id="rightHandInfo">等待数据...</div>
+            </div>
+        </div>
+        
+        <div class="data">
+            <h3>📡 实时数据流</h3>
+            <div id="dataOutput">等待连接...</div>
+        </div>
+        
+        <div style="margin-top: 30px; font-size: 14px; opacity: 0.8;">
+            <p>📋 使用说明:</p>
+            <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
+                <li>确保Quest设备和控制电脑在同一网络</li>
+                <li>在控制电脑上运行WebSocket服务器</li>
+                <li>点击"开始手部追踪"按钮</li>
+                <li>允许手部追踪权限</li>
+                <li>将手放在Quest摄像头视野内</li>
+                <li>使用捏合手势控制机械臂夹爪</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let xrSession = null;
+        let websocket = null;
+        let animationFrame = null;
+        let isTracking = false;
+
+        // WebSocket连接配置
+        const WEBSOCKET_URL = 'ws://10.3.32.31:8765';  // 你的电脑IP地址
+
+        // 获取电脑IP地址的提示
+        function showIPInstructions() {
+            const currentHost = window.location.hostname;
+            if (currentHost !== 'localhost' && currentHost !== '127.0.0.1') {
+                // 如果从网络访问，尝试使用当前主机
+                return `ws://${currentHost}:8765`;
+            }
+            return WEBSOCKET_URL;
+        }
+
+        async function connectWebSocket() {
+            try {
+                const wsUrl = showIPInstructions();
+                websocket = new WebSocket(wsUrl);
+                
+                websocket.onopen = function() {
+                    updateStatus('已连接到控制服务器', true);
+                    updateDataOutput('WebSocket连接成功');
+                };
+                
+                websocket.onclose = function() {
+                    updateStatus('与服务器断开连接', false);
+                    updateDataOutput('WebSocket连接断开');
+                };
+                
+                websocket.onerror = function(error) {
+                    updateStatus('连接错误: ' + error, false);
+                    updateDataOutput('WebSocket连接错误: ' + error);
+                };
+                
+            } catch (error) {
+                updateStatus('WebSocket连接失败: ' + error, false);
+                updateDataOutput('连接失败: ' + error);
+            }
+        }
+
+        async function startHandTracking() {
+            try {
+                // 连接WebSocket
+                await connectWebSocket();
+                
+                // 检查WebXR支持
+                if (!navigator.xr) {
+                    throw new Error('此设备不支持WebXR');
+                }
+
+                // 请求手部追踪会话
+                xrSession = await navigator.xr.requestSession('immersive-vr', {
+                    requiredFeatures: ['hand-tracking']
+                });
+
+                updateStatus('手部追踪已启动', true);
+                isTracking = true;
+                
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+                // 开始追踪循环
+                xrSession.requestAnimationFrame(onXRFrame);
+
+            } catch (error) {
+                updateStatus('启动失败: ' + error.message, false);
+                updateDataOutput('错误: ' + error.message);
+            }
+        }
+
+        function stopHandTracking() {
+            if (xrSession) {
+                xrSession.end();
+                xrSession = null;
+            }
+            
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+            
+            isTracking = false;
+            updateStatus('手部追踪已停止', false);
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        function onXRFrame(time, frame) {
+            if (!isTracking) return;
+
+            try {
+                // 获取手部输入源
+                const inputSources = xrSession.inputSources;
+                const handData = {
+                    timestamp: time,
+                    leftHand: null,
+                    rightHand: null
+                };
+
+                for (let inputSource of inputSources) {
+                    if (inputSource.hand) {
+                        const hand = inputSource.hand;
+                        const handedness = inputSource.handedness; // 'left' or 'right'
+                        
+                        // 获取手腕关节数据
+                        if (hand.get('wrist')) {
+                            const wristJoint = hand.get('wrist');
+                            const pose = frame.getJointPose(wristJoint, xrSession.referenceSpace);
+                            
+                            if (pose) {
+                                const handInfo = {
+                                    isTracked: true,
+                                    position: {
+                                        x: pose.transform.position.x,
+                                        y: pose.transform.position.y,
+                                        z: pose.transform.position.z
+                                    },
+                                    rotation: {
+                                        x: pose.transform.orientation.x,
+                                        y: pose.transform.orientation.y,
+                                        z: pose.transform.orientation.z,
+                                        w: pose.transform.orientation.w
+                                    }
+                                };
+
+                                // 计算捏合强度 (简化版本)
+                                const thumbTip = hand.get('thumb-tip');
+                                const indexTip = hand.get('index-finger-tip');
+                                
+                                if (thumbTip && indexTip) {
+                                    const thumbPose = frame.getJointPose(thumbTip, xrSession.referenceSpace);
+                                    const indexPose = frame.getJointPose(indexTip, xrSession.referenceSpace);
+                                    
+                                    if (thumbPose && indexPose) {
+                                        const distance = Math.sqrt(
+                                            Math.pow(thumbPose.transform.position.x - indexPose.transform.position.x, 2) +
+                                            Math.pow(thumbPose.transform.position.y - indexPose.transform.position.y, 2) +
+                                            Math.pow(thumbPose.transform.position.z - indexPose.transform.position.z, 2)
+                                        );
+                                        
+                                        // 将距离转换为捏合强度 (0-1)
+                                        handInfo.pinchStrength = Math.max(0, Math.min(1, 1 - (distance / 0.05)));
+                                    }
+                                } else {
+                                    handInfo.pinchStrength = 0;
+                                }
+
+                                if (handedness === 'left') {
+                                    handData.leftHand = handInfo;
+                                } else if (handedness === 'right') {
+                                    handData.rightHand = handInfo;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 发送数据到服务器
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify(handData));
+                }
+
+                // 更新UI
+                updateHandInfo(handData);
+
+            } catch (error) {
+                updateDataOutput('追踪错误: ' + error.message);
+            }
+
+            // 继续下一帧
+            if (isTracking) {
+                animationFrame = xrSession.requestAnimationFrame(onXRFrame);
+            }
+        }
+
+        function updateStatus(message, isConnected) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = '状态: ' + message;
+            statusEl.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
+        }
+
+        function updateDataOutput(message) {
+            const outputEl = document.getElementById('dataOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            outputEl.innerHTML = `[${timestamp}] ${message}<br>` + outputEl.innerHTML;
+            
+            // 限制显示的消息数量
+            const lines = outputEl.innerHTML.split('<br>');
+            if (lines.length > 10) {
+                outputEl.innerHTML = lines.slice(0, 10).join('<br>');
+            }
+        }
+
+        function updateHandInfo(handData) {
+            const leftInfo = document.getElementById('leftHandInfo');
+            const rightInfo = document.getElementById('rightHandInfo');
+
+            if (handData.leftHand && handData.leftHand.isTracked) {
+                const pos = handData.leftHand.position;
+                const pinch = handData.leftHand.pinchStrength;
+                leftInfo.innerHTML = `
+                    ✅ 追踪中<br>
+                    位置: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})<br>
+                    捏合强度: ${(pinch * 100).toFixed(1)}%
+                `;
+            } else {
+                leftInfo.innerHTML = '❌ 未检测到';
+            }
+
+            if (handData.rightHand && handData.rightHand.isTracked) {
+                const pos = handData.rightHand.position;
+                const pinch = handData.rightHand.pinchStrength;
+                rightInfo.innerHTML = `
+                    ✅ 追踪中<br>
+                    位置: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})<br>
+                    捏合强度: ${(pinch * 100).toFixed(1)}%
+                `;
+            } else {
+                rightInfo.innerHTML = '❌ 未检测到';
+            }
+        }
+
+        // 页面加载时显示IP配置信息
+        window.onload = function() {
+            const wsUrl = showIPInstructions();
+            updateDataOutput(`WebSocket服务器地址: ${wsUrl}`);
+            updateDataOutput('请确保在控制电脑上运行Python WebSocket服务器');
+        };
+    </script>
+</body>
+</html>

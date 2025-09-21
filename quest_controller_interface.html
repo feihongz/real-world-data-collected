@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quest Controller Real Data</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background: #111;
+            color: white;
+            text-align: center;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+        }
+        button {
+            background: #4CAF50;
+            border: none;
+            color: white;
+            padding: 20px 40px;
+            font-size: 18px;
+            margin: 10px;
+            cursor: pointer;
+            border-radius: 10px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        .status {
+            font-size: 24px;
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            background: rgba(255, 255, 255, 0.1);
+        }
+        .connected { background: rgba(0, 255, 0, 0.3); }
+        .disconnected { background: rgba(255, 0, 0, 0.3); }
+        .data {
+            text-align: left;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .controller-data {
+            display: flex;
+            justify-content: space-between;
+            margin: 20px 0;
+        }
+        .controller {
+            flex: 1;
+            margin: 0 10px;
+            padding: 15px;
+            background: rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎮 Quest控制器真实数据</h1>
+        
+        <div id="status" class="status disconnected">
+            状态: 未连接到服务器
+        </div>
+        
+        <button id="startBtn" onclick="startControllerTracking()">开始控制器追踪</button>
+        <button id="stopBtn" onclick="stopControllerTracking()" disabled>停止追踪</button>
+        
+        <div class="controller-data">
+            <div class="controller">
+                <h3>🎮 左控制器</h3>
+                <div id="leftControllerInfo">等待数据...</div>
+            </div>
+            <div class="controller">
+                <h3>🎮 右控制器</h3>
+                <div id="rightControllerInfo">等待数据...</div>
+            </div>
+        </div>
+        
+        <div class="data">
+            <h3>📡 控制器数据流</h3>
+            <div id="dataOutput">等待连接...</div>
+        </div>
+        
+        <div style="margin-top: 30px; font-size: 14px; opacity: 0.8;">
+            <p>📋 使用说明:</p>
+            <ul style="text-align: left; max-width: 600px; margin: 0 auto;">
+                <li>拿起Quest控制器</li>
+                <li>点击"开始控制器追踪"</li>
+                <li>移动右控制器控制机械臂</li>
+                <li>按下扳机键控制夹爪</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        let websocket = null;
+        let isTracking = false;
+        let animationFrame = null;
+
+        // WebSocket连接配置
+        const WEBSOCKET_URL = 'ws://10.3.32.31:8765';
+
+        async function connectWebSocket() {
+            try {
+                websocket = new WebSocket(WEBSOCKET_URL);
+                
+                websocket.onopen = function() {
+                    updateStatus('已连接到控制服务器', true);
+                    updateDataOutput('WebSocket连接成功');
+                };
+                
+                websocket.onclose = function() {
+                    updateStatus('与服务器断开连接', false);
+                    updateDataOutput('WebSocket连接断开');
+                };
+                
+                websocket.onerror = function(error) {
+                    updateStatus('连接错误', false);
+                    updateDataOutput('WebSocket连接错误: ' + error);
+                };
+                
+            } catch (error) {
+                updateStatus('WebSocket连接失败', false);
+                updateDataOutput('连接失败: ' + error);
+            }
+        }
+
+        async function startControllerTracking() {
+            try {
+                await connectWebSocket();
+                
+                // 检查Gamepad API支持
+                if (!navigator.getGamepads) {
+                    throw new Error('此设备不支持Gamepad API');
+                }
+
+                updateStatus('控制器追踪已启动', true);
+                isTracking = true;
+                
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+
+                // 开始追踪循环
+                trackControllers();
+
+            } catch (error) {
+                updateStatus('启动失败: ' + error.message, false);
+                updateDataOutput('错误: ' + error.message);
+            }
+        }
+
+        function trackControllers() {
+            if (!isTracking) return;
+
+            try {
+                const gamepads = navigator.getGamepads();
+                const controllerData = {
+                    timestamp: Date.now() / 1000,
+                    leftHand: null,
+                    rightHand: null
+                };
+
+                // 遍历所有游戏手柄
+                for (let i = 0; i < gamepads.length; i++) {
+                    const gamepad = gamepads[i];
+                    if (gamepad && gamepad.connected) {
+                        
+                        // 检查是否是Quest控制器
+                        if (gamepad.id.toLowerCase().includes('oculus') || 
+                            gamepad.id.toLowerCase().includes('quest') ||
+                            gamepad.id.toLowerCase().includes('meta')) {
+                            
+                            // 获取控制器位置和旋转（如果支持）
+                            let position = { x: 0, y: 0, z: 0 };
+                            let rotation = { x: 0, y: 0, z: 0, w: 1 };
+                            
+                            // 从轴获取位置信息（简化版本）
+                            if (gamepad.axes.length >= 4) {
+                                position.x = gamepad.axes[0] || 0;  // 左右
+                                position.y = gamepad.axes[1] || 0;  // 上下
+                                position.z = gamepad.axes[2] || 0;  // 前后
+                            }
+                            
+                            // 获取按钮状态作为捏合强度
+                            let pinchStrength = 0;
+                            if (gamepad.buttons.length > 0) {
+                                pinchStrength = gamepad.buttons[0].value; // 扳机键
+                            }
+                            
+                            const handData = {
+                                isTracked: true,
+                                position: position,
+                                rotation: rotation,
+                                pinchStrength: pinchStrength,
+                                controllerIndex: i,
+                                controllerId: gamepad.id
+                            };
+                            
+                            // 根据控制器索引分配左右手
+                            if (i % 2 === 0) {
+                                controllerData.leftHand = handData;
+                            } else {
+                                controllerData.rightHand = handData;
+                            }
+                        }
+                    }
+                }
+
+                // 发送数据到服务器
+                if (websocket && websocket.readyState === WebSocket.OPEN) {
+                    websocket.send(JSON.stringify(controllerData));
+                }
+
+                // 更新UI
+                updateControllerInfo(controllerData);
+
+            } catch (error) {
+                updateDataOutput('追踪错误: ' + error.message);
+            }
+
+            // 继续下一帧
+            if (isTracking) {
+                animationFrame = requestAnimationFrame(trackControllers);
+            }
+        }
+
+        function stopControllerTracking() {
+            isTracking = false;
+            
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
+            }
+            
+            if (websocket) {
+                websocket.close();
+                websocket = null;
+            }
+            
+            updateStatus('控制器追踪已停止', false);
+            
+            document.getElementById('startBtn').disabled = false;
+            document.getElementById('stopBtn').disabled = true;
+        }
+
+        function updateStatus(message, isConnected) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = '状态: ' + message;
+            statusEl.className = 'status ' + (isConnected ? 'connected' : 'disconnected');
+        }
+
+        function updateDataOutput(message) {
+            const outputEl = document.getElementById('dataOutput');
+            const timestamp = new Date().toLocaleTimeString();
+            outputEl.innerHTML = `[${timestamp}] ${message}<br>` + outputEl.innerHTML;
+            
+            // 限制显示的消息数量
+            const lines = outputEl.innerHTML.split('<br>');
+            if (lines.length > 10) {
+                outputEl.innerHTML = lines.slice(0, 10).join('<br>');
+            }
+        }
+
+        function updateControllerInfo(data) {
+            const leftInfo = document.getElementById('leftControllerInfo');
+            const rightInfo = document.getElementById('rightControllerInfo');
+
+            if (data.leftHand && data.leftHand.isTracked) {
+                const pos = data.leftHand.position;
+                const trigger = data.leftHand.pinchStrength;
+                leftInfo.innerHTML = `
+                    ✅ 已连接<br>
+                    控制器: ${data.leftHand.controllerId}<br>
+                    位置: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})<br>
+                    扳机: ${(trigger * 100).toFixed(1)}%
+                `;
+            } else {
+                leftInfo.innerHTML = '❌ 未检测到左控制器';
+            }
+
+            if (data.rightHand && data.rightHand.isTracked) {
+                const pos = data.rightHand.position;
+                const trigger = data.rightHand.pinchStrength;
+                rightInfo.innerHTML = `
+                    ✅ 已连接<br>
+                    控制器: ${data.rightHand.controllerId}<br>
+                    位置: (${pos.x.toFixed(3)}, ${pos.y.toFixed(3)}, ${pos.z.toFixed(3)})<br>
+                    扳机: ${(trigger * 100).toFixed(1)}%
+                `;
+            } else {
+                rightInfo.innerHTML = '❌ 未检测到右控制器';
+            }
+        }
+
+        // 页面加载时显示配置信息
+        window.onload = function() {
+            updateDataOutput(`WebSocket服务器地址: ${WEBSOCKET_URL}`);
+            updateDataOutput('请确保Quest控制器已开启并连接');
+        };
+    </script>
+</body>
+</html>
+
+
